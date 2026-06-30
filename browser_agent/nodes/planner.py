@@ -1,3 +1,4 @@
+"""Planner node — converts the user task into a URL + driver goal."""
 import os
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -11,11 +12,11 @@ from browser_agent.prompts.templates import PLANNER_SYSTEM, PLANNER_USER
 load_dotenv()
 
 
-class BrowserAction(BaseModel):
-    action: Literal["navigate", "click", "type", "key", "scroll", "set_price", "answer", "extract", "done"]
-    target: str | None = Field(None, description="URL, element text, key name, or max price for set_price")
-    value: str | None = Field(None, description="Text to type, scroll direction, or min price for set_price")
-    reason: str = Field(description="Why this action is taken")
+class BrowserPlan(BaseModel):
+    url: str = Field(description="The URL to visit")
+    goal: str = Field(description="Specific goal for the browser driver")
+    task_type: Literal["shopping", "informational"] = Field(description="Type of task")
+    reason: str = Field(description="Brief explanation of the plan")
 
 
 _llm: ChatGoogleGenerativeAI | None = None
@@ -33,43 +34,29 @@ def _get_llm() -> ChatGoogleGenerativeAI:
 
 
 async def planner_node(state: BrowserState) -> dict:
-    llm = _get_llm().with_structured_output(BrowserAction)
+    llm = _get_llm().with_structured_output(BrowserPlan)
 
-    history = state.get("action_history", [])[-10:]
-    history_text = "\n".join(
-        f"  {i+1}. {h['action']} {h.get('target') or ''}"
-        f"{' → ' + h.get('value', '') if h.get('value') else ''}"
-        f" [{h.get('result', 'ok')}]"
-        for i, h in enumerate(history)
-    ) or "  (none)"
-
-    current_url = state.get("current_url") or "(not yet navigated)"
-
-    # Give the LLM a clear signal when the Amazon price filter is already applied
-    if "rh=p_36" in current_url:
-        url_hint = "NOTE: Price filter is already applied in the URL. If product results are visible in the snapshot, issue 'extract' NOW.\n"
-    else:
-        url_hint = ""
-
-    prompt = PLANNER_USER.format(
-        task=state["task"],
-        url=current_url,
-        url_hint=url_hint,
-        snapshot=state.get("page_snapshot", "(empty)")[:4000],
-        history=history_text,
-    )
-
-    messages = [SystemMessage(content=PLANNER_SYSTEM), HumanMessage(content=prompt)]
+    messages = [
+        SystemMessage(content=PLANNER_SYSTEM),
+        HumanMessage(content=PLANNER_USER.format(task=state["task"])),
+    ]
 
     try:
-        action: BrowserAction = await llm.ainvoke(messages)
+        plan: BrowserPlan = await llm.ainvoke(messages)
+        print(f"[planner] url       : {plan.url}")
+        print(f"[planner] goal      : {plan.goal}")
+        print(f"[planner] task_type : {plan.task_type}")
         return {
-            "pending_action": action.model_dump(),
-            "iteration": state.get("iteration", 0) + 1,
+            "browser_url": plan.url,
+            "browser_goal": plan.goal,
+            "task_type": plan.task_type,
+            "status": "browsing",
         }
     except Exception as exc:
+        print(f"[planner] error: {exc}")
         return {
-            "pending_action": {"action": "done", "reason": f"Planner error: {exc}"},
-            "error_count": state.get("error_count", 0) + 1,
-            "iteration": state.get("iteration", 0) + 1,
+            "browser_url": "",
+            "browser_goal": state["task"],
+            "task_type": "informational",
+            "status": "browsing",
         }

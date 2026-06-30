@@ -37,6 +37,12 @@ async def comparator_node(state: BrowserState) -> dict:
 
     try:
         response = await _get_llm().ainvoke(messages)
-        return {"comparison_result": response.content}
+        content = response.content
+        if isinstance(content, list):
+            content = "\n".join(
+                p.get("text", str(p)) if isinstance(p, dict) else str(p)
+                for p in content if p
+            )
+        return {"comparison_result": str(content)}
     except Exception as exc:
         return {"comparison_result": f"Comparison failed: {exc}"}

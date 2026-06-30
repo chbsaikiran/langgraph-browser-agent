@@ -4,9 +4,23 @@ from browser_agent.state import BrowserState
 async def responder_node(state: BrowserState) -> dict:
     items = state.get("extracted_items", [])
     comparison = state.get("comparison_result", "")
-    history = state.get("action_history", [])
+    actions = state.get("browser_actions", [])
+    browser_path = state.get("browser_path", "")
+    browser_content = state.get("browser_content", "")
 
     lines: list[str] = [f"# Result: {state['task']}\n"]
+
+    # Blocked / failed cascade
+    if browser_path == "blocked":
+        lines.append("**Could not complete the task.**\n")
+        if browser_content:
+            lines.append(browser_content)
+        else:
+            lines.append(
+                "The page was blocked (CAPTCHA, login wall, or all browser layers exhausted). "
+                "Try again or use a different source."
+            )
+        return {"final_answer": "\n".join(lines), "status": "done"}
 
     if comparison:
         lines.append(comparison)
@@ -21,13 +35,11 @@ async def responder_node(state: BrowserState) -> dict:
             lines.append("")
     else:
         lines.append(
-            "The agent could not extract product data. "
+            "The agent could not extract product data from the page. "
             "The page structure may have changed or the task could not be completed."
         )
 
-    lines.append(f"\n---\n*Completed in {len(history)} browser steps*")
+    turns = len(actions)
+    lines.append(f"\n---\n*Browsed via {browser_path} path in {turns} driver turn(s)*")
 
-    return {
-        "final_answer": "\n".join(lines),
-        "status": "done",
-    }
+    return {"final_answer": "\n".join(lines), "status": "done"}

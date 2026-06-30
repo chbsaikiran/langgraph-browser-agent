@@ -1,18 +1,23 @@
-from typing import TypedDict, Annotated
-import operator
+from typing import TypedDict
 
 
 class BrowserState(TypedDict):
     task: str
-    # action_history accumulates across all nodes via operator.add
-    action_history: Annotated[list[dict], operator.add]
-    current_url: str
-    page_snapshot: str          # accessibility tree text
-    use_vision: bool            # True when a11y tree is sparse → trigger llava
-    pending_action: dict | None # action decided by planner, consumed by executor
-    extracted_items: list[dict] # structured product data collected so far
-    comparison_result: str      # markdown comparison from comparator
-    final_answer: str           # formatted output for user
-    error_count: int
-    iteration: int
-    status: str                 # "browsing" | "extracting" | "done"
+
+    # Set by planner
+    browser_url: str        # URL for the cascade to visit
+    browser_goal: str       # Specific goal for the driver (what to navigate/extract)
+    task_type: str          # "shopping" | "informational"
+
+    # Set by browser_skill after cascade runs
+    browser_content: str    # Extracted page text from cascade
+    browser_path: str       # "extract" | "a11y" | "vision" | "blocked"
+    browser_actions: list   # Step records from driver turns
+
+    # Shopping pipeline
+    extracted_items: list[dict]
+    comparison_result: str
+
+    # Final output
+    final_answer: str
+    status: str             # "planning" | "browsing" | "done"

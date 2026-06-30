@@ -6,22 +6,19 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.rule import Rule
 
-from browser_agent.browser.controller import BrowserController
 from browser_agent.graph import build_graph
 from browser_agent.state import BrowserState
 
 load_dotenv()
 console = Console()
 
-# Node label → display colour
 _NODE_STYLE: dict[str, str] = {
-    "planner":    "cyan",
-    "executor":   "blue",
-    "vision":     "yellow",
-    "answer":     "magenta",
-    "extractor":  "green",
-    "comparator": "green",
-    "responder":  "white",
+    "planner":       "cyan",
+    "browser_skill": "blue",
+    "answer":        "magenta",
+    "extractor":     "green",
+    "comparator":    "green",
+    "responder":     "white",
 }
 
 
@@ -29,38 +26,30 @@ def _print_update(node_name: str, update: dict) -> None:
     colour = _NODE_STYLE.get(node_name, "white")
 
     if node_name == "planner":
-        action = update.get("pending_action") or {}
-        act = action.get("action", "?").upper()
-        target = action.get("target") or ""
-        reason = action.get("reason") or ""
-        iteration = update.get("iteration", "")
+        task_type = update.get("task_type", "")
+        url = update.get("browser_url", "")
         console.print(
-            f"[dim][{iteration:>2}][/dim] [{colour}]{act:<10}[/{colour}]"
-            f" [bold]{target[:60]}[/bold]"
-            + (f" — [dim]{reason[:60]}[/dim]" if reason else "")
+            f"[{colour}]plan[/{colour}] [{task_type}] → {url[:80]}"
         )
 
-    elif node_name == "executor":
-        history = update.get("action_history") or []
-        if history:
-            last = history[-1]
-            ok = "✓" if last.get("result") == "success" else "✗"
-            console.print(
-                f"         [{colour}]{ok} {last.get('result', '')[:80]}[/{colour}]"
-            )
-
-    elif node_name == "vision":
-        console.print(f"         [{colour}]◎ llava:7b vision analysis running...[/{colour}]")
+    elif node_name == "browser_skill":
+        path = update.get("browser_path", "?")
+        content_len = len(update.get("browser_content", ""))
+        actions = update.get("browser_actions", [])
+        console.print(
+            f"[{colour}]browse[/{colour}] path={path}  "
+            f"turns={len(actions)}  content={content_len} chars"
+        )
 
     elif node_name == "answer":
-        console.print(f"         [{colour}]◉ reading page and answering question...[/{colour}]")
+        console.print(f"[{colour}]answer[/{colour}] ◉ generating answer from page content ...")
 
     elif node_name == "extractor":
-        items = update.get("extracted_items") or []
-        console.print(f"         [{colour}]⬇ extracted {len(items)} product(s)[/{colour}]")
+        items = update.get("extracted_items", [])
+        console.print(f"[{colour}]extract[/{colour}] ⬇ {len(items)} product(s) found")
 
     elif node_name == "comparator":
-        console.print(f"         [{colour}]⚖ generating comparison...[/{colour}]")
+        console.print(f"[{colour}]compare[/{colour}] ⚖ generating comparison ...")
 
 
 async def run_agent(task: str) -> None:
@@ -69,38 +58,32 @@ async def run_agent(task: str) -> None:
 
     initial_state: BrowserState = {
         "task": task,
-        "action_history": [],
-        "current_url": "",
-        "page_snapshot": "",
-        "use_vision": False,
-        "pending_action": None,
+        "browser_url": "",
+        "browser_goal": "",
+        "task_type": "",
+        "browser_content": "",
+        "browser_path": "",
+        "browser_actions": [],
         "extracted_items": [],
         "comparison_result": "",
         "final_answer": "",
-        "error_count": 0,
-        "iteration": 0,
-        "status": "browsing",
+        "status": "planning",
     }
 
     graph = build_graph()
     final_answer: str = ""
 
-    try:
-        async for chunk in graph.astream(initial_state, stream_mode="updates"):
-            for node_name, update in chunk.items():
-                _print_update(node_name, update)
-                if "final_answer" in update and update["final_answer"]:
-                    final_answer = update["final_answer"]
-
-    finally:
-        await BrowserController.close()
+    async for chunk in graph.astream(initial_state, stream_mode="updates"):
+        for node_name, update in chunk.items():
+            _print_update(node_name, update)
+            if "final_answer" in update and update["final_answer"]:
+                final_answer = update["final_answer"]
 
     console.print()
     console.print(Rule(style="dim"))
     console.print()
 
     if final_answer:
-        # Guard: any node could theoretically return a list of content blocks
         if isinstance(final_answer, list):
             final_answer = "\n".join(
                 p.get("text", str(p)) if isinstance(p, dict) else str(p)
